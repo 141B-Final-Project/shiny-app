@@ -1,0 +1,40 @@
+library(tidyverse)
+library(jsonlite)
+library(httr)
+
+# This is some data for population I was trying out, but you can change the get variables to whichever one you like for the project
+# State Data
+
+r <- GET("https://api.census.gov/data/2018/acs/acs5/",
+         query = list(
+           get = "NAME,B01001_001E,B01001_002E,B01001_026E,B01001A_001E,B01001A_002E,B01001A_017E,B01001B_001E,B01001B_002E,B01001B_017E,B01001D_001E,B01001D_002E,B01001D_017E", 
+           `for` = "state:*"
+         ))
+json <- content(r, as = "text")
+
+state_pop <- fromJSON(json, simplifyMatrix = TRUE)
+state_pop <- as.data.frame(state_pop)[-1,]
+names(state_pop) <- c("state", "total", "total male", "total female", 
+                      "total white", "total white male", "total white female", 
+                      "total black", "total black male", "total black female",
+                      "total asian", "total asian male", "total asian female", "state number")
+
+
+# County Data
+
+r <- GET("https://api.census.gov/data/2018/acs/acs5/",
+         query = list(
+           get = "NAME,B01001_001E,B01001_002E,B01001_026E,B01001A_001E,B01001A_002E,B01001A_017E,B01001B_001E,B01001B_002E,B01001B_017E,B01001D_001E,B01001D_002E,B01001D_017E", 
+           `for` = "county:*"
+         ))
+json <- content(r, as = "text")
+
+county_pop <- fromJSON(json, simplifyMatrix = TRUE)
+county_pop <- as.data.frame(county_pop)[-1,]
+names(county_pop) <- c("county", "total", "total male", "total female", 
+                       "total white", "total white male", "total white female", 
+                       "total black", "total black male", "total black female",
+                       "total asian", "total asian male", "total asian female", 
+                       "state_number", "county_fip")
+county_pop <- county_pop %>%
+  mutate("state county fip" = paste0(state_number,county_fip))
