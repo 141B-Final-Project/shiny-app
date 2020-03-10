@@ -1,0 +1,744 @@
+
+library(shiny)
+library(leaflet)
+library(scales)
+library(ggplot2)
+library(ggvis)
+library(ggmap)
+library(magrittr)
+library(reshape2)
+library(data.table)
+library(tidyr)
+library(dplyr)
+library(plotly)
+source('server.R',local=TRUE)
+
+ui <- fluidPage(
+  
+  titlePanel(strong('Zillow Housing Prices')),
+  
+  br(),	
+  br(),	
+  
+  tabsetPanel(	
+    tabPanel('Compare Prices by Location',
+             sidebarLayout(
+               sidebarPanel(
+                 tags$style(" .well { background-color: white;
+                            border: 0px;
+                            webkit-box-shadow: none;
+                            box-shadow: none; } ")
+                 
+                 , uiOutput(outputId = 'mapMetricSel')
+                 , uiOutput(outputId = 'mapTypeSel')
+                 , uiOutput(outputId = 'mapRegionSel')
+                 , uiOutput(outputId = 'mapCitySel')
+                 , uiOutput(outputId = 'mapMaxPriceSel')
+                 , br()
+                 , uiOutput(outputId = 'mapSubmit')
+                 
+                 , width = 2
+                 ),
+               mainPanel(
+                 br(),
+                 leafletOutput('propertyMap',
+                               height = '768px'),
+                 width = 10
+               )
+               )
+             ),
+    
+    tabPanel('Visualize Pricing History',
+             sidebarLayout(
+               sidebarPanel(
+                 tags$style(" .well { background-color: white;
+                            border: 0px;
+                            webkit-box-shadow: none;
+                            box-shadow: none; } ")
+                 
+                 , uiOutput(outputId = 'metricSel')
+                 , uiOutput(outputId = 'typeSel')
+                 , uiOutput(outputId = 'citySel')
+                 , uiOutput(outputId = 'regionSel')
+                 , uiOutput(outputId = 'placeSel')
+                 , uiOutput(outputId = 'dateSel')
+                 , br()
+                 , uiOutput(outputId = 'submit')
+                 , width = 2
+                 ),
+               
+               mainPanel(
+                 br(),
+                 br(),
+                 ggvisOutput('tsViz'),
+                 width = 10
+               )
+               )
+             ),
+    
+    tabPanel('See Change in Value Over Time',
+             sidebarLayout(
+               sidebarPanel(
+                 tags$style(" .well { background-color: white;
+                            border: 0px;
+                            webkit-box-shadow: none;
+                            box-shadow: none; } ")
+                 
+                 , uiOutput(outputId = 'tsHeatmapMetricSel')
+                 , uiOutput(outputId = 'tsHeatmapCitySel')
+                 , uiOutput(outputId = 'tsHeatmapRegionSel')
+                 , uiOutput(outputId = 'tsHeatmapMaxPriceSel')
+                 , br()
+                 , uiOutput(outputId = 'tsHeatmapSubmit')
+                 , width = 2
+                 ),
+               
+               mainPanel(
+                 br(),
+                 leafletOutput('tsHeatmapViz',
+                               height = '728px'),
+                 hr(),
+                 uiOutput(outputId = 'tsHeatmapTimeSel'),
+                 width = 10
+               )
+               )
+             ),
+    
+    type = 'pills'
+  )
+)
+
+
+
+#########
+
+library(shiny)
+library(leaflet)
+library(leaflet.extras)
+library(scales)
+library(ggplot2)
+library(ggvis)
+library(ggmap)
+library(magrittr)
+library(reshape2)
+library(data.table)
+library(tidyr)
+library(dplyr)
+library(plotly)
+
+
+
+#I commented this line(18 ) below its not my directory....just letting you know!!
+#setwd("/home/ttzhou/documents/projects/data-science/zillow-housing-app/")
+
+CITIES <- c('San Francisco', 'Los Angeles', 'Seattle', 'New York')
+
+THEME <- theme(
+  panel.background = element_rect(fill = 'white'),
+  panel.grid.major = element_line(color = 'grey80', size = 0.25),
+  panel.grid.minor = element_blank(),
+  
+  plot.title = element_text(size = 18, margin = margin(b = 15),
+                            family = 'Helvetica',
+                            face = 'bold',
+                            hjust = 0.5),
+  
+  plot.subtitle = element_text(size = 16, margin = margin(b = 30),
+                               family = 'Helvetica',
+                               hjust = 0.5),
+  
+  axis.title.x = element_text(size = 14, vjust = -5),
+  
+  axis.title.y = element_text(size = 14, vjust = 10),
+  
+  axis.text.x = element_text(size = 12, margin = margin(t = 10)),
+  axis.text.y = element_text(size = 12, margin = margin(r = 10)),
+  
+  axis.line = element_line(size = 1, color = 'grey40'),
+  
+  legend.background = element_rect(fill = "white", color = "grey"),
+  legend.margin = margin(0.5, 1, 0.5, 1, 'cm'),
+  legend.position = c(0.91, 0.8),
+  legend.title = element_blank(),
+  legend.text = element_text(size = 14),
+  legend.key = element_rect(fill = "white", colour = NULL),
+  legend.key.width = unit(1, 'line'),
+  
+  plot.margin = unit(c(1, 1, 1, 1), 'cm')
+)
+
+
+server <- function(input, output, session) {
+  
+  output$sidebarTitle <- renderText({
+    "<span style='font-size: 24px; font-weight: 700;'>I want to...</span>"
+  })
+  
+  output$metricSel <- renderUI({
+    choices <- c('', 'Median Listing Price', 'Median Rental Price', 'ZHVI')
+    names(choices) <- c('(click and choose a metric)', 'median listing price', 'median rental price', 'median home value')
+    
+    selectizeInput(inputId = 'metricSel',
+                   label = 'I want to compare',
+                   choices = choices,
+                   multiple = F,
+                   selected = NULL)
+  })
+  
+  output$typeSel <- renderUI({
+    req(input$metricSel)
+    
+    choices <- c('', 'All Homes', 'Single Family Residence', 'Condominium', paste(1:4, 'Bedroom'), '5+ Bedroom')
+    names(choices) <- c('Please select a housing type', 'all homes', 'single family residences', 'condominiums', paste(1:4, 'bedrooms'), '5+ bedrooms')
+    
+    selectizeInput(inputId = 'typeSel',
+                   label = 'for',
+                   choices = choices,
+                   multiple = F,
+                   selected = NULL)
+  })
+  
+  output$citySel <- renderUI({
+    req(input$metricSel)
+    req(input$typeSel)
+    
+    choices <- c('Please select a city' = '', CITIES)
+    selectizeInput(inputId = 'citySel',
+                   label = 'in',
+                   choices = choices,
+                   multiple = F,
+                   selected = NULL)
+  })
+  
+  output$regionSel <- renderUI({
+    req(input$metricSel)
+    req(input$typeSel)
+    req(input$citySel)
+    
+    choices <- c('', 'Neighborhood', 'Zip')
+    names(choices) <- c('Please select a region type', 'neighborhoods', 'zip codes')
+    
+    selectizeInput(inputId = 'regionSel',
+                   label = 'for the',
+                   choices = choices,
+                   multiple = F,
+                   selected = NULL)
+  })
+  
+  TSData <- reactiveValues()
+  
+  observeEvent(input$regionSel, {
+    if (input$regionSel == '')
+      return()
+    
+    fn <- paste0('data', '/', input$regionSel, '_', gsub('\\s', '', input$metricSel), '_ts_plotdata.csv')
+    data <- read.csv(fn, stringsAsFactors = F, row.names = NULL)
+    data$Time <- lubridate::ymd(data$Time)
+    data <- subset(data, !is.na(Value))
+    data <- subset(data, HousingType == input$typeSel)
+    TSData$tsdata <- subset(data, City == input$citySel)
+    
+    output$placeSel <- renderUI({
+      req(input$metricSel)
+      req(input$typeSel)
+      req(input$citySel)
+      req(input$regionSel)
+      choices <- c('', sort(unique(TSData$tsdata$RegionName)))
+      
+      selectizeInput(inputId = 'placeSel',
+                     label = 'of',
+                     choices = choices,
+                     multiple = T,
+                     selected = NULL)
+    })
+    
+    output$dateSel <- renderUI({
+      req(input$metricSel)
+      req(input$typeSel)
+      req(input$citySel)
+      req(input$regionSel)
+      req(input$placeSel)
+      
+      times <- sort(unique(TSData$tsdata$Time))
+      
+      dateRangeInput(inputId = 'dateSel',
+                     label = 'between',
+                     separator = ' and ',
+                     start = min(times),
+                     end = max(times),
+                     min = min(times),
+                     max = max(times),
+                     format = 'yyyy-mm',
+                     startview = 'month')
+    })
+  })
+  
+  output$submit <- renderUI({
+    req(input$metricSel)
+    req(input$typeSel)
+    req(input$citySel)
+    req(input$regionSel)
+    req(input$placeSel)
+    req(input$dateSel)
+    
+    actionButton(inputId = 'submit',
+                 label = 'Compare!')
+  })
+  
+  plotTSViz <- eventReactive(input$submit, {
+    data <- as.data.table(TSData$tsdata)
+    
+    if (!nrow(data)) {
+      return(NULL)
+    }
+    ## Subset the housing type
+    plotdata <- data[data$HousingType == input$typeSel, ]
+    
+    ## Subset the places
+    plotdata <- plotdata[plotdata$RegionName %in% input$placeSel, ]
+    
+    ## Subset the time
+    plotdata <- plotdata[plotdata$Time >= input$dateSel[[1]] & plotdata$Time <= input$dateSel[[2]], ]
+    
+    plotdata$RegionName <- factor(plotdata$RegionName,
+                                  levels = sort(unique(plotdata$RegionName)),
+                                  labels = sort(unique(plotdata$RegionName)))
+    
+    plotdata$City <- factor(plotdata$City,
+                            levels = sort(unique(plotdata$City)),
+                            labels = sort(unique(plotdata$City)))
+    
+    ## set the interval points
+    big_pointdata <- copy(plotdata)
+    small_pointdata <- copy(plotdata)
+    
+    big_pointdata[, minTime := min(Time), by = 'RegionName']
+    big_pointdata[, maxTime := max(Time), by = 'RegionName']
+    big_pointdata <- big_pointdata[(month(big_pointdata$Time) - month(big_pointdata$minTime)) %% 6 == 0 |
+                                     big_pointdata$Time %in% c(big_pointdata$minTime, big_pointdata$maxTime), ]
+    
+    big_pointdata$shape <- 'square'
+    small_pointdata$shape <- 'circle'
+    
+    makeTooltip <- function(data) {
+      if (!'shape' %in% names(data)) {
+        return(NULL)
+      }
+      value <- data$Value
+      date <- as.Date(data$Time / 86400000, origin = '1970-01-01')
+      
+      paste("<span style='font-family: Helvetica Neue; font-weight: 300'>",
+            paste("<strong>Date:</strong> ", date),
+            "<br/>",
+            paste("<strong>",  ifelse(input$metricSel == 'ZHVI', 'Median Home Value', input$metricSel), ":</strong> ",
+                  paste0('$', sprintf("%.2f", value))),
+            "</span>")
+    }
+    
+    ## generate the ggvis
+    plotdata %>%
+      ggvis::ggvis(x = ~Time, y = ~Value) %>%
+      ggvis::set_options(height = 768, width = 1566,
+                         duration = 0, resizable = F) %>%
+      ggvis::group_by(RegionName) %>%
+      ggvis::layer_lines(stroke = ~RegionName, strokeWidth := 1.5) %>%
+      ggvis::layer_points(data = small_pointdata, fill = ~RegionName, size := 20, shape := ~shape) %>%
+      ggvis::layer_points(data = big_pointdata, fill = ~RegionName, size := 100, shape := ~shape) %>%
+      
+      ggvis::add_tooltip(makeTooltip, "hover") %>%
+      
+      ggvis::add_axis("x",
+                      title_offset = 50,
+                      format = "%b %Y",
+                      properties = axis_props(
+                        axis = list(stroke = "black", strokeWidth = 2),
+                        grid = list(stroke = "#F8F8F8"),
+                        ticks = list(stroke = "grey90", strokeWidth = 1),
+                        title = list(fontSize = 16),
+                        labels = list(angle = 0, align = "center", fontSize = 12)
+                      )) %>%
+      
+      ggvis::scale_datetime("x", nice = 'month') %>%
+      
+      ggvis::add_axis("y",
+                      title_offset = 100,
+                      properties = axis_props(
+                        axis = list(stroke = "black", strokeWidth = 2),
+                        grid = list(stroke = "#F8F8F8"),
+                        ticks = list(stroke = "grey90", strokeWidth = 1),
+                        title = list(fontSize = 16),
+                        labels = list(angle = 0, align = "right", fontSize = 12)
+                      )) %>%
+      
+      ggvis::scale_numeric("y", domain = c(0, 1.2*max(plotdata$Value)),
+                           label = ifelse(input$metricSel == 'ZHVI', 'Median Home Value', input$metricSel),
+                           expand = c(0, 0)) %>%
+      
+      ggvis::hide_legend('stroke') %>%
+      ggvis::add_legend("fill",
+                        title = gsub('s$', '', input$regionSel),
+                        properties = legend_props(
+                          title = list(fontSize = 16, dy = -10),
+                          labels = list(fontSize = 14, dx = 5,
+                                        font = 'Helvetica Neue'),
+                          symbols = list(shape = 'square'),
+                          legend = list(y = 200)
+                        )) %>%
+      
+      bind_shiny('tsViz', 'plotTitle')
+  })
+  
+  observeEvent(input$submit, {
+    output$tsViz <- reactive({
+      plotTSViz()
+    })
+  })
+  
+  output$mapMetricSel <- renderUI({
+    choices <- c('', 'Median Listing Price', 'Median Rental Price', 'ZHVI')
+    names(choices) <- c('(click and choose a metric)', 'median listing price', 'median rental price', 'median home value')
+    
+    selectizeInput(inputId = 'mapMetricSel',
+                   label = 'I want to see',
+                   choices = choices,
+                   multiple = F,
+                   selected = NULL)
+  })
+  
+  output$mapTypeSel <- renderUI({
+    
+    choices <- c('', 'All Homes', 'Single Family Residence', 'Condominium', paste(1:4, 'Bedroom'), '5+ Bedroom')
+    names(choices) <- c('(select a housing type)', 'all homes', 'single family residences', 'condominiums', paste(1:4, 'bedrooms'), '5+ bedrooms')
+    
+    selectizeInput(inputId = 'mapTypeSel',
+                   label = 'for',
+                   choices = choices,
+                   multiple = F,
+                   selected = NULL)
+  })
+  
+  output$mapRegionSel <- renderUI({
+    selectizeInput(inputId = 'mapRegionSel',
+                   label = 'in each',
+                   choices = c('(select a region type)' = '', 'neighborhood' = 'Neighborhood', 'zip code' = 'Zip'),
+                   multiple = F,
+                   selected = NULL)
+  })
+  
+  output$mapCitySel <- renderUI({
+    req(input$mapRegionSel)
+    choices <- CITIES
+    
+    selectizeInput(inputId = 'mapCitySel',
+                   label = 'of',
+                   choices = choices,
+                   multiple = F,
+                   selected = NULL)
+  })
+  
+  output$propertyMap <- renderLeaflet({
+    top = 49.3457868 # north lat
+    left = -124.7844079 # west long
+    right = -66.9513812 # east long
+    bottom =  24.7433195 # south lat
+    
+    leaflet() %>%
+      addProviderTiles(provider = providers$OpenStreetMap.Mapnik) %>%
+      fitBounds(left, top, right, bottom)
+  })
+  
+  output$mapSubmit <- renderUI({
+    req(input$mapCitySel)
+    
+    actionButton(inputId = 'mapSubmit',
+                 label = 'Go!')
+  })
+  
+  mapData <- reactiveValues()
+  
+  fetchMapData <- reactive({
+    fn <- paste0('data', '/', input$mapRegionSel, '_', gsub('\\s', '', input$mapMetricSel), '_ts_plotdata.csv')
+    data <- read.csv(fn, stringsAsFactors = F, row.names = NULL)
+    data$Time <- lubridate::ymd(data$Time)
+    data$Size <- data$Value / min(data$Value, na.rm = T)
+    mapData$data <- data
+  })
+  
+  updateMap <- reactive({
+    proxy <- leafletProxy('propertyMap')
+    latest_data <- mapData$latestData
+    plot_data <- mapData$plotData
+    
+    ## update the map
+    map <- proxy %>%
+      clearShapes() %>%
+      clearControls() %>%
+      addCircles(data = plot_data,
+                 lat = ~lat, lng = ~lon,
+                 fillColor = ~colorBin(palette = 'YlGn', domain = latest_data$Value)(latest_data$Value),
+                 color = ~colorBin(palette = 'YlGn', reverse = T, domain = latest_data$Value)(latest_data$Value),
+                 weight = 2,
+                 opacity = 1,
+                 fillOpacity = 0.8,
+                 radius = ~220*sqrt(Size),
+                 popup = ~paste(
+                   "<style> div.leaflet-popup-content-wrapper { opacity: 0.8; } </style>",
+                   "<h4>", RegionName, "</h4>",
+                   "<h5>", "<b>", toupper(ifelse(input$mapMetricSel == 'ZHVI',
+                                                 'Median Home Value',
+                                                 input$mapMetricSel)), ":</b> ", Value, "<br/></h5>",
+                   
+                   ifelse(input$mapMetricSel == 'ZHVI' & input$mapTypeSel == 'All Homes',
+                          paste0("<h5>", "<b>PER SQ. FT:</b> ",
+                                 ifelse(!is.na(Value_PerSqft), sprintf("%.4g", Value_PerSqft), "NA"),
+                                 "<br/></h5>"),
+                          ""),
+                   
+                   sep = ""))
+    
+    if (nrow(latest_data)) {
+      map <- map %>%
+        addLegend("topright",
+                  pal = colorBin(palette = 'YlGn', domain = plot_data$Value),
+                  values = plot_data$Value,
+                  title = ifelse(input$mapMetricSel == 'ZHVI',
+                                 'Median Home Value',
+                                 input$mapMetricSel),
+                  labFormat = labelFormat(prefix = "$"),
+                  opacity = 1)
+    }
+    
+    map
+  })
+  
+  observeEvent(input$mapSubmit, {
+    fetchMapData()
+    
+    data <- mapData$data %>%
+      subset(City == input$mapCitySel) %>%
+      subset(HousingType == input$mapTypeSel) %>%
+      subset(!is.na(Value))
+    
+    place_coordinates <- geocode(input$mapCitySel, source = 'dsk')
+    
+    ## BUILD THE BASE MAP
+    proxy <- leafletProxy('propertyMap')
+    proxy %>%
+      setView(lat = place_coordinates$lat,
+              lng = place_coordinates$lon,
+              zoom = 13)
+    
+    if (nrow(data)) {
+      latestTimes <- data %>%
+        group_by(RegionName) %>%
+        summarise(Time = max(Time)) %>%
+        as.data.frame()
+      
+      latest_data <- merge(latestTimes, data,
+                           by = c('RegionName', 'Time'))
+      
+      ## so we can set the sizes
+      latest_data$Size <- latest_data$Value / min(latest_data$Value, na.rm = T)
+      mapData$latestData <- latest_data
+      mapData$plotData <- latest_data
+      
+      output$mapMaxPriceSel <- renderUI({
+        max <- max(latest_data$Value, na.rm = T)
+        min <- min(latest_data$Value, na.rm = T)
+        
+        if (max == min) {
+          max <- 1.5*min
+        }
+        step <- ifelse(input$mapMetricSel == 'Median Rental Price', 100, 5000)
+        sliderInput(inputId = 'mapMaxPriceSlider',
+                    label = 'with value at most',
+                    min = min,
+                    max = max,
+                    pre = '$',
+                    step = step,
+                    value = max)
+      })
+      updateMap()
+    } else {
+      output$mapMaxPriceSel <- renderUI({
+        NULL
+      })
+      
+      proxy %>%
+        clearMarkers() %>%
+        clearShapes() %>%
+        clearControls() %>%
+        setView(lat = place_coordinates$lat,
+                lng = place_coordinates$lon,
+                zoom = 13)
+    }
+  })
+  
+  observeEvent(input$mapMaxPriceSlider, {
+    mapData$plotData <- mapData$latestData %>%
+      subset(Value <= input$mapMaxPriceSlider)
+    
+    updateMap()
+  })
+  
+  output$tsHeatmapViz <- renderLeaflet({
+    top = 49.3457868 # north lat
+    left = -124.7844079 # west long
+    right = -66.9513812 # east long
+    bottom =  24.7433195 # south lat
+    
+    leaflet() %>%
+      addProviderTiles(provider = providers$CartoDB) %>%
+      fitBounds(left, top, right, bottom)
+  })
+  
+  output$tsHeatmapMetricSel <- renderUI({
+    choices <- c('', 'Median Listing Price', 'Median Rental Price', 'ZHVI', 'Price To Rent Ratio')
+    names(choices) <- c('(click and choose a metric)', 'median listing price', 'median rental price', 'median home value', 'price-to-rent ratio')
+    
+    selectizeInput(inputId = 'tsHeatmapMetricSel',
+                   label = 'Show me how',
+                   choices = choices,
+                   multiple = F,
+                   selected = NULL)
+  })
+  
+  output$tsHeatmapCitySel <- renderUI({
+    req(input$tsHeatmapMetricSel)
+    choices <- CITIES
+    selectizeInput(inputId = 'tsHeatmapCitySel',
+                   label = 'has changed over time in',
+                   choices = c('(click to choose a city)' = '', choices),
+                   multiple = F,
+                   selected = NULL)
+  })
+  
+  output$tsHeatmapRegionSel <- renderUI({
+    req(input$tsHeatmapCitySel)
+    selectizeInput(inputId = 'tsHeatmapRegionSel',
+                   label = 'across',
+                   choices = c('(click to choose a region)' = '', 'neighborhoods' = 'Neighborhood', 'zip codes' = 'Zip'),
+                   multiple = F,
+                   selected = NULL)
+  })
+  
+  output$tsHeatmapSubmit <- renderUI({
+    req(input$tsHeatmapRegionSel)
+    actionButton(inputId = 'tsHeatmapSubmit',
+                 label = 'Go!')
+  })
+  
+  fetchTSMapData <- reactive({
+    validate(
+      need(input$tsHeatmapCitySel, 'Please select a city.'),
+      need(input$tsHeatmapCitySel != '', 'Please select a city.'),
+      need(input$tsHeatmapRegionSel, 'Please select a region.')
+    )
+    fn <- paste0('data', '/', input$tsHeatmapRegionSel, '_', gsub('\\s', '', input$tsHeatmapMetricSel), '_ts_plotdata.csv')
+    data <- read.csv(fn, stringsAsFactors = F, row.names = NULL)
+    data$Time <- lubridate::ymd(data$Time)
+    return(data)
+  })
+  
+  heatmapData <- reactiveValues()
+  times <- reactiveValues()
+  
+  observeEvent(input$tsHeatmapSubmit, {
+    data <- fetchTSMapData() %>%
+      subset(City == input$tsHeatmapCitySel) %>%
+      subset(!is.na(Value))
+    
+    times$times <- sort(unique(data$Time))
+    earliest <- min(times$times)
+    latest <- max(times$times)
+    
+    output$tsHeatmapTimeSel <- renderUI({
+      sliderInput(inputId = 'tsHeatmapSlider',
+                  label = NULL,
+                  ticks = F,
+                  min = earliest,
+                  max = latest,
+                  value = earliest,
+                  step = 365 / 2,
+                  timeFormat = '%b %Y',
+                  width = '100%',
+                  animate = animationOptions(interval = 1000, loop = F))
+    })
+    
+    heatmapData$data <- data
+    time_data <- subset(data, Time == earliest)
+    
+    place_coordinates <- geocode(input$tsHeatmapCitySel, source = 'dsk')
+    proxy <- leafletProxy('tsHeatmapViz')
+    
+    proxy %>%
+      setView(lat = place_coordinates$lat,
+              lng = place_coordinates$lon,
+              zoom = 13) %>%
+      
+      clearShapes() %>%
+      clearControls() %>%
+      clearHeatmap() %>%
+      
+      addHeatmap(data = time_data,
+                 minOpacity = 0.8,
+                 gradient = 'RdBu',
+                 lng = ~lon, lat = ~lat, intensity = ~Value / max(time_data$Value),
+                 blur = 30, max = 1.0, radius = 35) %>%
+      
+      addCircles(data = time_data,
+                 lat = ~lat, lng = ~lon,
+                 weight = 2,
+                 opacity = 0.0,
+                 fillOpacity = 0.0,
+                 radius = ~150*sqrt(Value),
+                 popup = ~paste(
+                   "<style> div.leaflet-popup-content-wrapper { opacity: 0.8; } </style>",
+                   "<h4>", RegionName, "</h4>",
+                   "<h5>", "<b>Price to Rent Ratio:</b> ", Value, "<br/></h5>",
+                   sep = "")) %>%
+      
+      addLegend("topright",
+                pal = colorBin(palette = 'RdBu', domain = data$Value),
+                values = data$Value,
+                title = ifelse(input$tsHeatmapMetricSel == 'ZHVI',
+                               'Median Home Value',
+                               input$tsHeatmapMetricSel),
+                opacity = 1)
+  })
+  
+  observeEvent(input$tsHeatmapSlider, {
+    data <- heatmapData$data
+    
+    rawDate <- input$tsHeatmapSlider
+    monthStartDate <- paste0(c(year(rawDate), month(rawDate), '01'), collapse='-')
+    
+    time_data <- subset(data, Time == monthStartDate)
+    proxy <- leafletProxy('tsHeatmapViz')
+    
+    if (nrow(time_data)) {
+      ## update the map
+      proxy %>%
+        clearShapes() %>%
+        clearHeatmap() %>%
+        addHeatmap(data = time_data,
+                   gradient = 'RdBu',
+                   minOpacity = 0.8,
+                   cellSize = 35,
+                   lng = ~lon, lat = ~lat, intensity = ~Value / max(time_data$Value),
+                   blur = 30, max = 1.0, radius = 35) %>%
+        
+        addCircles(data = time_data,
+                   lat = ~lat, lng = ~lon,
+                   weight = 2,
+                   opacity = 0.0,
+                   fillOpacity = 0.0,
+                   radius = ~220*sqrt(Value),
+                   popup = ~paste(
+                     "<style> div.leaflet-popup-content-wrapper { opacity: 0.8; } </style>",
+                     "<h4>", RegionName, "</h4>",
+                     "<h5>", "<b>Price to Rent Ratio:</b> ", Value, "<br/></h5>",
+                     sep = ""))
+    }
+  })
+}
