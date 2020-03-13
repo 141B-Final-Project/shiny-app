@@ -1,0 +1,63 @@
+#  Create a choropleth for US counties for years 2009-2018
+
+library(tidyverse)
+library(plotly)
+library(jsonlite)
+library(httr)
+
+# for loop to read data for all counties each year from 2009-2018
+all_years_county <- NULL
+years <- c("2009", "2010", "2011", "2012", "2013", "2014","2015", "2016", "2017", "2018")
+for (i in seq_len(10)) {
+  url <- paste0("https://api.census.gov/data/", years[i], "/acs/acs5/")
+  all_years_county <- bind_rows(
+    all_years_county,
+    
+    GET(url,
+        query = list(
+          get = "NAME,B01001_001E,B01001_002E,B01001_026E,B01001A_001E,B01001A_002E,B01001A_017E,B01001B_001E,B01001B_002E,B01001B_017E,B01001D_001E,B01001D_002E,B01001D_017E",
+          `for` = "county:*"
+        )) %>%
+      content(as = "text") %>%
+      fromJSON(simplifyMatrix = TRUE) %>%
+      as.data.frame() %>%
+      slice(-1)
+    
+  )
+}
+
+all_years_county <- all_years_county %>% 
+  mutate(state_county_fips = paste0(V14, V15))
+year <- c(rep(2009,3221),rep(2010,3221),rep(2011,3221),rep(2012,3221),rep(2013,3221),rep(2014,3220),
+          rep(2015,3220),rep(2016,3220),rep(2017,3220),rep(2018,3220))
+all_years_county <- all_years_county %>% mutate(year = year)
+
+names(all_years_county) <- c("state", "total_population", "total_male", "total_female", 
+                             "total_white", "total_white_male", "total_white_female", 
+                             "total_black", "total_black_male", "total_black_female",
+                             "total_asian", "total_asian_male", "total_asian_female", 
+                             "state_number", "county_fips", "state_county_fips", "year")
+                            
+all_years_county <- all_years_county %>%
+  mutate(
+    pct_total_white = as.numeric(all_years_county$total_white)/as.numeric(all_years_county$total_population),
+    pct_total_black = as.numeric(all_years_county$total_black)/as.numeric(all_years_county$total_population),
+    pct_total_asian = as.numeric(all_years_county$total_asian)/as.numeric(all_years_county$total_population)
+  )
+
+######### US County Map
+
+library(choroplethr)
+
+# requires data frame with cols: value, region
+value <- as.numeric(all_years_county$total)
+region <- as.numeric(all_years_county$state_county_fips)
+# add a third col, year
+year <- all_years_county$year
+county_df <- as.data.frame(cbind(value, region, year))
+
+# whole map
+county_choropleth(subset(county_df, county_df$year==2009))
+
+# zoom into a state
+county_choropleth(subset(county_df, county_df$year==2009), state_zoom="washington")
